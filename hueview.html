@@ -1,0 +1,668 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HueView</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="styles.css"></head><body>
+<nav><div class="wrap"><a class="logo" href="index.html"><img src="images/logo.png" alt="HueBelieve" height="40"></a>
+<div class="links"><a href="index.html" class="">Home</a><a href="huetest.html" class="">HueTest</a><a href="hueview.html" class="on">HueView</a><a href="index.html#about" class="">About</a></div><a class="btn primary" href="index.html#contact">Say hi</a></div></nav>
+
+<header class="wrap pagehead"><span class="badge"><i></i>Project 2</span><h1>HueView</h1><p>3D-printed glasses driven by an Arduino, designed to help colourblind wearers tell colours apart.</p></header>
+<section><div class="wrap"><h2>Build it yourself</h2><div class="grid">
+<div class="card"><h3>3D frame files</h3><p>All 5 STL parts for printing the frame, in one zip.</p><a class="btn primary" href="downloads/hueview-frame.zip" download>Download all (.zip)</a></div><div class="card"><h3>Individual parts</h3><p>Download each STL separately.</p><div style="display:flex;flex-wrap:wrap;gap:8px"><a class="btn" href="downloads/3d/hueview-part-1.stl" download>Part 1</a><a class="btn" href="downloads/3d/hueview-part-2.stl" download>Part 2</a><a class="btn" href="downloads/3d/hueview-part-3.stl" download>Part 3</a><a class="btn" href="downloads/3d/hueview-part-4.stl" download>Part 4</a><a class="btn" href="downloads/3d/hueview-part-5.stl" download>Part 5</a></div></div></div>
+<h3 style="margin-top:40px">Arduino IDE code</h3><p class="muted">ESP32-CAM (AI Thinker) with a DFPlayer Mini. It names the colour in view and speaks it aloud when you press the button. Needs the <code>DFRobotDFPlayerMini</code> library.</p>
+<p style="margin-top:8px"><a class="btn" href="code/hueview.ino" download>Download .ino</a></p>
+<h3 style="margin-top:24px">Colour codes</h3><table><tr><th>Color</th><th>No.</th><th>Color</th><th>No.</th></tr>
+<tr><td>Red</td><td>001</td><td>Purple</td><td>008</td></tr><tr><td>Orange</td><td>002</td><td>Pink</td><td>009</td></tr><tr><td>Yellow</td><td>003</td><td>Brown</td><td>010</td></tr><tr><td>Green</td><td>004</td><td>White</td><td>011</td></tr><tr><td>Lime</td><td>005</td><td>Gray</td><td>012</td></tr><tr><td>Blue</td><td>006</td><td>Black</td><td>013</td></tr><tr><td>Cyan</td><td>007</td><td>Unknown</td><td>014</td></tr></table>
+<details style="margin-top:24px"><summary class="btn">Show full code</summary><pre><code>// =====================================================================
+// ESP32-CAM SoftAP color stream + DFPlayer Mini
+// - Live MJPEG on :81, dashboard/stats on :80
+// - Volume slider on AP dashboard
+// - Physical push button on GPIO 13 speaks current color
+//
+// SD play indexes (ear-tested, updated Sep 25):
+// 1 Pink | 2 Device Started | 3 Red | 4 Green | 5 Black | 6 Blue |
+// 7 Green | 8 Orange | 9 Yellow | 10 Unknown | 11 White
+//
+// DFPlayer wiring (AI Thinker ESP32-CAM):
+// VCC → 5 V | GND → GND
+// RX → GPIO 14 (1 kΩ resistor) | TX → GPIO 15
+// SPK1/SPK2 → speaker
+//
+// Speak button:
+// one side → GPIO 13, other side → GND (internal pull-up)
+//
+// Library: DFRobotDFPlayerMini
+// =====================================================================
+
+
+#include &lt;esp_camera.h&gt;
+#include &lt;WiFi.h&gt;
+#include &lt;WiFiServer.h&gt;
+#include &lt;esp_http_server.h&gt;
+#include &lt;esp_wifi.h&gt;
+#include &lt;HardwareSerial.h&gt;
+#include &lt;DFRobotDFPlayerMini.h&gt;
+
+
+// =====================================================================
+// SoftAP credentials
+// =====================================================================
+const char* AP_SSID = &quot;ESP32-CAM-AP&quot;;
+const char* AP_PASS = &quot;12345678&quot;;
+
+
+// =====================================================================
+// Camera pins — AI Thinker ESP32-CAM
+// =====================================================================
+#define PWDN_GPIO_NUM 32
+#define RESET_GPIO_NUM -1
+#define XCLK_GPIO_NUM 0
+#define SIOD_GPIO_NUM 26
+#define SIOC_GPIO_NUM 27
+#define Y9_GPIO_NUM 35
+#define Y8_GPIO_NUM 34
+#define Y7_GPIO_NUM 39
+#define Y6_GPIO_NUM 36
+#define Y5_GPIO_NUM 21
+#define Y4_GPIO_NUM 19
+#define Y3_GPIO_NUM 18
+#define Y2_GPIO_NUM 5
+#define VSYNC_GPIO_NUM 25
+#define HREF_GPIO_NUM 23
+#define PCLK_GPIO_NUM 22
+
+
+// =====================================================================
+// DFPlayer Mini — UART2 on free GPIO pins
+// =====================================================================
+#define DF_TX_PIN 14 // ESP32 TX → DFPlayer RX (via 1 kΩ)
+#define DF_RX_PIN 15 // ESP32 RX ← DFPlayer TX
+#define DF_VOLUME 20 // default 0–30
+#define SPEAK_BTN_PIN 13 // push button to GND (INPUT_PULLUP)
+#define VOL_UP_PIN 2 // volume + button to GND (INPUT_PULLUP)
+#define VOL_DOWN_PIN 12 // volume - button to GND (INPUT_PULLUP)
+#define VOL_STEP 2 // how much each press changes volume
+
+
+HardwareSerial dfSerial(2);
+DFRobotDFPlayerMini dfPlayer;
+bool dfReady = false;
+volatile int gVolume = DF_VOLUME;
+
+
+// =====================================================================
+// Port 80 → esp_http_server (UI, /stats, /contrast, /volume)
+// Port 81 → plain WiFiServer (MJPEG stream, runs in loop())
+// =====================================================================
+httpd_handle_t uiServer = NULL;
+WiFiServer streamServer(81);
+
+
+// =====================================================================
+// Shared globals written by loop(), read by /stats
+// =====================================================================
+portMUX_TYPE gMux = portMUX_INITIALIZER_UNLOCKED;
+volatile uint8_t gR=0, gG=0, gB=0;
+volatile uint16_t gH=0;
+volatile uint8_t gS=0, gV=0;
+volatile uint32_t gFps=0;
+volatile int gContrast=0;
+char gColorName[16] = &quot;Scanning...&quot;;
+
+
+// Detected color → DFPlayer track number (ear-tested, updated Sep 25)
+// Track 2 = &quot;Device is started&quot; — played only on boot, not here.
+int colorTrack(const char* name) {
+ if (strcmp(name, &quot;Pink&quot;) == 0) return 1;
+ if (strcmp(name, &quot;Red&quot;) == 0) return 3;
+ if (strcmp(name, &quot;Green&quot;) == 0) return 4; // track 4 = Green
+ if (strcmp(name, &quot;Black&quot;) == 0) return 5;
+ if (strcmp(name, &quot;Blue&quot;) == 0) return 6;
+ if (strcmp(name, &quot;Orange&quot;) == 0) return 8;
+ if (strcmp(name, &quot;Yellow&quot;) == 0) return 9;
+ if (strcmp(name, &quot;White&quot;) == 0) return 11;
+ // Cyan, Purple, Gray, Lime → Unknown
+
+ return 10;
+}
+
+
+void playDetectedColor() {
+if (!dfReady) {
+  Serial.println(&quot;[DF] not ready&quot;);
+  return;
+}
+int track = colorTrack(gColorName);
+dfPlayer.play(track);
+Serial.printf(&quot;[DF] play track %d (color=%s)\n&quot;, track, gColorName);
+}
+
+
+// Debounced speak button (active LOW). Call from loop + stream loop.
+// Latches gColorName at the instant the button goes DOWN so that
+// continuous frame sampling cannot change the value mid-press.
+void checkSpeakButton() {
+ static bool lastState = HIGH;
+ static unsigned long lastEdgeMs = 0;
+ static unsigned long lastSpeakMs = 0;
+ static char latchedColor[16] = &quot;&quot;;
+
+
+ bool state = digitalRead(SPEAK_BTN_PIN);
+ unsigned long now = millis();
+
+
+ // Falling edge — latch color immediately
+ if (lastState == HIGH &amp;&amp; state == LOW) {
+   lastEdgeMs = now;
+    strncpy(latchedColor, gColorName, sizeof(latchedColor) - 1);
+ }
+
+
+ // Confirm after debounce window (40 ms) and honour 3 s cooldown
+ if (state == LOW &amp;&amp;
+      (now - lastEdgeMs) &gt;= 40 &amp;&amp;
+      (now - lastSpeakMs) &gt;= 3000) {
+   lastSpeakMs = now;
+   if (!dfReady) {
+      Serial.println(&quot;[BTN] DF not ready&quot;);
+    } else {
+      int track = colorTrack(latchedColor);
+      dfPlayer.play(track);
+      Serial.printf(&quot;[BTN] pressed → color=%s track=%d\n&quot;, latchedColor, track);
+    }
+ }
+
+
+ lastState = state;
+}
+// Volume up/down buttons — debounced, 300 ms repeat rate when held
+void checkVolumeButtons() {
+ static unsigned long lastUpMs = 0;
+ static unsigned long lastDownMs = 0;
+ unsigned long now = millis();
+
+
+ // Volume UP (GPIO 2)
+ if (digitalRead(VOL_UP_PIN) == LOW &amp;&amp; (now - lastUpMs) &gt;= 300) {
+   lastUpMs = now;
+   int v = constrain((int)gVolume + VOL_STEP, 0, 30);
+   gVolume = v;
+   if (dfReady) dfPlayer.volume(v);
+   Serial.printf(&quot;[VOL+] %d/30\n&quot;, v);
+ }
+
+
+ // Volume DOWN (GPIO 12)
+ if (digitalRead(VOL_DOWN_PIN) == LOW &amp;&amp; (now - lastDownMs) &gt;= 300) {
+   lastDownMs = now;
+   int v = constrain((int)gVolume - VOL_STEP, 0, 30);
+   gVolume = v;
+   if (dfReady) dfPlayer.volume(v);
+   Serial.printf(&quot;[VOL-] %d/30\n&quot;, v);
+ }
+}
+
+
+// =====================================================================
+// YUV422 → RGB
+// =====================================================================
+ static inline void yuv2rgb(uint8_t y, uint8_t u, uint8_t v, uint8_t &amp;r,
+                                                           uint8_t &amp;g, uint8_t &amp;b) {
+int C = y-16, D = u-128, E = v-128;
+r = (uint8_t)constrain((298*C + 409*E + 128) &gt;&gt; 8, 0, 255); g =
+(uint8_t)constrain((298*C - 100*D - 208*E + 128) &gt;&gt; 8, 0, 255); b =
+(uint8_t)constrain((298*C + 516*D + 128) &gt;&gt; 8, 0, 255); }
+
+
+
+// =====================================================================
+// RGB → HSV (H 0-360, S/V 0-100)
+// =====================================================================
+static void rgb2hsv(uint8_t r, uint8_t g, uint8_t b,
+                      uint16_t &amp;h, uint8_t &amp;s, uint8_t &amp;v) {
+float rf=r/255.f, gf=g/255.f, bf=b/255.f;
+float mx=max(rf,max(gf,bf)), mn=min(rf,min(gf,bf)), d=mx-mn;
+v = (uint8_t)(mx*100);
+if (mx&lt;0.001f) { s=h=0; return; }
+s = (uint8_t)(d/mx*100);
+float hf=0;
+if (d&gt;0.001f) {
+  if (mx==rf) hf = 60.f*fmodf((gf-bf)/d, 6.f);
+  else if (mx==gf) hf = 60.f*((bf-rf)/d + 2.f);
+  else hf = 60.f*((rf-gf)/d + 4.f);
+
+  if (hf&lt;0) hf+=360.f;
+}
+h = (uint16_t)hf;
+}
+
+
+// =====================================================================
+// HSV-based color name
+// =====================================================================
+static const char* colorNameFromHSV(uint16_t h, uint8_t s, uint8_t v) {
+if (v &lt; 15) return &quot;Black&quot;;
+if (s &lt; 20 &amp;&amp; v &gt; 75) return &quot;White&quot;;
+if (s &lt; 20) return &quot;Gray&quot;;
+if (s &gt; 35 &amp;&amp; v &gt; 25) {
+  if ((h &lt;= 10) || (h &gt;= 350)) return &quot;Red&quot;;
+  if (h &gt;= 11 &amp;&amp; h &lt;= 25) return &quot;Orange&quot;;
+  if (h &gt;= 26 &amp;&amp; h &lt;= 65) return &quot;Yellow&quot;;
+  if (h &gt;= 66 &amp;&amp; h &lt;= 155) return &quot;Green&quot;;
+  if (h &gt;= 156 &amp;&amp; h &lt;= 195) return &quot;Cyan&quot;;
+  if (h &gt;= 196 &amp;&amp; h &lt;= 255) return &quot;Blue&quot;;
+  if (h &gt;= 256 &amp;&amp; h &lt;= 290) return &quot;Purple&quot;;
+  if (h &gt;= 291 &amp;&amp; h &lt;= 349) return &quot;Pink&quot;;
+}
+return &quot;Unknown&quot;;
+}
+
+
+static void sampleColors(camera_fb_t *fb) {
+uint32_t tr=0,tg=0,tb=0,n=0;
+for (int i=0; i+3&lt;(int)fb-&gt;len; i+=16) {
+  uint8_t r,g,b;
+  yuv2rgb(fb-&gt;buf[i], fb-&gt;buf[i+1], fb-&gt;buf[i+3], r,g,b);
+  tr+=r; tg+=g; tb+=b; n++;
+}
+if (!n) return;
+uint8_t ar=tr/n, ag=tg/n, ab=tb/n;
+uint16_t h; uint8_t s,v;
+rgb2hsv(ar,ag,ab,h,s,v);
+const char* name = colorNameFromHSV(h, s, v);
+portENTER_CRITICAL(&amp;gMux);
+gR=ar; gG=ag; gB=ab; gH=h; gS=s; gV=v;
+portEXIT_CRITICAL(&amp;gMux);
+strncpy(gColorName, name, sizeof(gColorName)-1);
+}
+
+
+// =====================================================================
+// Dashboard HTML (stream on :81, click image to speak)
+// =====================================================================
+static const char INDEX_HTML[] PROGMEM = R&quot;html(
+&lt;!DOCTYPE html&gt;&lt;html&gt;
+&lt;head&gt;
+
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;
+&lt;title&gt;ESP32-CAM&lt;/title&gt;
+&lt;style&gt;
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0b0b0b;color:#eee;font-family:system-ui,sans-serif;
+display:flex;flex-direction:column;align-items:center;padding:14px;gap:12px}
+h1{font-size:1.1rem;letter-spacing:.05em}
+#feed{width:100%;max-width:480px;border:2px solid #333;border-radius:8px;
+     background:#111;overflow:hidden;min-height:120px}
+#feed img{width:100%;display:block;aspect-ratio:4/3;object-fit:contain;
+          image-rendering:pixelated}
+.panel{width:100%;max-width:480px;padding:13px;
+      background:#161616;border:1px solid #252525;border-radius:8px;
+      display:flex;flex-direction:column;gap:10px}
+.row{display:flex;align-items:center;gap:10px}
+.lbl{font-size:.72rem;color:#9ca3af;text-transform:uppercase
+   ; letter-spacing:.06em;white-space:nowrap}
+input[type=range]{flex:1;accent-color:#3b82f6}
+#cval,#volval{font-weight:700;min-width:2rem;text-align:right}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.chip{background:#111;border:1px solid #252525;border-radius:6px;
+padding:9px 4px;text-align:center}
+.chip
+b{display:block;font-size:1.3rem;font-weight:700;line-height:1.1} .chip
+small{color:#6b7280;font-size:.6rem;text-transform:uppercase}
+#swatch{height:34px;border-radius:6px;border:1px solid #333;
+transition:background .15s}
+#meta{font-size:.72rem;color:#555;text-align:center}
+#color-badge{margin-top:4px;padding:14px 8px;border-radius:8px;
+             text-align:center;border:1px solid #252525;
+              background:#111;transition:background .3s}
+#color-badge .clabel{font-size:.7rem;color:#9ca3af;text-transform:uppercase;
+                       letter-spacing:.08em;margin-bottom:6px}
+#color-badge .cname{font-size:2rem;font-weight:800;letter-spacing:.03em;
+                                transition:color .3s}
+#hint{font-size:.75rem;color:#6b7280;text-align:center;max-width:480px}
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;h1&gt;ESP32-CAM Live (AP)&lt;/h1&gt;
+&lt;div id=&quot;feed&quot;&gt;
+&lt;img id=&quot;camimg&quot; alt=&quot;loading stream...&quot;&gt;
+&lt;/div&gt;
+&lt;p id=&quot;hint&quot;&gt;Press the physical button (GPIO 13) to speak the detected color&lt;/p&gt;
+&lt;div class=&quot;panel&quot;&gt;
+&lt;div class=&quot;row&quot;&gt;
+  &lt;span class=&quot;lbl&quot;&gt;Contrast&lt;/span&gt;
+  &lt;input type=&quot;range&quot; id=&quot;cs&quot; min=&quot;0&quot; max=&quot;100&quot; value=&quot;50&quot;
+           oninput=&quot;setC(this.value)&quot;&gt;
+
+  &lt;span id=&quot;cval&quot;&gt;50&lt;/span&gt;
+&lt;/div&gt;
+&lt;div class=&quot;row&quot;&gt;
+  &lt;span class=&quot;lbl&quot;&gt;Volume&lt;/span&gt;
+  &lt;input type=&quot;range&quot; id=&quot;vs&quot; min=&quot;0&quot; max=&quot;30&quot; value=&quot;20&quot;
+           oninput=&quot;setVol(this.value)&quot;&gt;
+  &lt;span id=&quot;volval&quot;&gt;20&lt;/span&gt;
+&lt;/div&gt;
+&lt;span class=&quot;lbl&quot;&gt;RGB&lt;/span&gt;
+&lt;div class=&quot;grid&quot;&gt;
+  &lt;div class=&quot;chip&quot;&gt;&lt;b id=&quot;rv&quot;&gt;0&lt;/b&gt;&lt;small&gt;R&lt;/small&gt;&lt;/div&gt;
+  &lt;div class=&quot;chip&quot;&gt;&lt;b id=&quot;gv&quot;&gt;0&lt;/b&gt;&lt;small&gt;G&lt;/small&gt;&lt;/div&gt;
+  &lt;div class=&quot;chip&quot;&gt;&lt;b id=&quot;bv&quot;&gt;0&lt;/b&gt;&lt;small&gt;B&lt;/small&gt;&lt;/div&gt;
+&lt;/div&gt;
+&lt;div id=&quot;swatch&quot;&gt;&lt;/div&gt;
+&lt;span class=&quot;lbl&quot;&gt;HSV&lt;/span&gt;
+&lt;div class=&quot;grid&quot;&gt;
+  &lt;div class=&quot;chip&quot;&gt;&lt;b id=&quot;hv&quot;&gt;0&lt;/b&gt;&lt;small&gt;H°&lt;/small&gt;&lt;/div&gt;
+  &lt;div class=&quot;chip&quot;&gt;&lt;b id=&quot;sv&quot;&gt;0&lt;/b&gt;&lt;small&gt;S %&lt;/small&gt;&lt;/div&gt;
+  &lt;div class=&quot;chip&quot;&gt;&lt;b id=&quot;vv&quot;&gt;0&lt;/b&gt;&lt;small&gt;V %&lt;/small&gt;&lt;/div&gt;
+&lt;/div&gt;
+&lt;div id=&quot;meta&quot;&gt;connecting…&lt;/div&gt;
+&lt;/div&gt;
+
+
+&lt;div id=&quot;color-badge&quot; style=&quot;width:100%;max-width:480px;&quot;&gt;
+&lt;div class=&quot;clabel&quot;&gt;Detected Color&lt;/div&gt;
+&lt;div class=&quot;cname&quot; id=&quot;cname&quot;&gt;—&lt;/div&gt;
+&lt;/div&gt;
+&lt;script&gt;
+document.getElementById(&#x27;camimg&#x27;).src =
+&#x27;http://&#x27; + location.hostname + &#x27;:81/stream&#x27;;
+
+
+async function setC(v){
+document.getElementById(&#x27;cval&#x27;).textContent = v;
+try{ await fetch(&#x27;/contrast?v=&#x27;+v); }catch(_){}
+}
+
+
+async function setVol(v){
+document.getElementById(&#x27;volval&#x27;).textContent = v;
+try{ await fetch(&#x27;/volume?v=&#x27;+v); }catch(_){}
+}
+
+
+async function poll(){
+try{
+  const d = await (await fetch(&#x27;/stats&#x27;)).json();
+  document.getElementById(&#x27;rv&#x27;).textContent = d.r;
+  document.getElementById(&#x27;gv&#x27;).textContent = d.g;
+  document.getElementById(&#x27;bv&#x27;).textContent = d.b;
+  document.getElementById(&#x27;hv&#x27;).textContent = d.h;
+  document.getElementById(&#x27;sv&#x27;).textContent = d.s;
+  document.getElementById(&#x27;vv&#x27;).textContent = d.v;
+  document.getElementById(&#x27;swatch&#x27;).style.background =
+     &#x27;rgb(&#x27;+d.r+&#x27;,&#x27;+d.g+&#x27;,&#x27;+d.b+&#x27;)&#x27;;
+  document.getElementById(&#x27;meta&#x27;).textContent =
+     &#x27;QQVGA 160×120 · ~&#x27;+d.fps+&#x27; FPS · SoftAP&#x27; +
+     (d.dfReady ? &#x27; · Speaker OK&#x27; : &#x27; · Speaker OFF&#x27;);
+  document.getElementById(&#x27;cs&#x27;).value = d.cui;
+  document.getElementById(&#x27;cval&#x27;).textContent = d.cui;
+  if (typeof d.vol === &#x27;number&#x27;) {
+     document.getElementById(&#x27;vs&#x27;).value = d.vol;
+     document.getElementById(&#x27;volval&#x27;).textContent = d.vol;
+  }
+  const colorMap = {
+     Red:&#x27;#ef4444&#x27;,Orange:&#x27;#f97316&#x27;,Yellow:&#x27;#eab308&#x27;,Green:&#x27;#22c55e&#x27;,
+  Cyan:&#x27;#06b6d4&#x27;,Blue:&#x27;#3b82f6&#x27;,Purple:&#x27;#a855f7&#x27;,Pink:&#x27;#ec4899&#x27;,
+  White:&#x27;#f1f5f9&#x27;,Gray:&#x27;#6b7280&#x27;,Black:&#x27;#374151&#x27;,Unknown:&#x27;#444&#x27; };
+  const cn = d.color || &#x27;—&#x27;;
+  const cc = colorMap[cn] || &#x27;#888&#x27;;
+  document.getElementById(&#x27;cname&#x27;).textContent = cn;
+  document.getElementById(&#x27;cname&#x27;).style.color = cc;
+  document.getElementById(&#x27;color-badge&#x27;).style.borderColor = cc+&#x27;66&#x27;;
+} catch(e){
+  document.getElementById(&#x27;meta&#x27;).textContent = &#x27;retrying stats…&#x27;;
+}
+}
+setInterval(poll, 250);
+poll();
+&lt;/script&gt;
+&lt;/body&gt;&lt;/html&gt;
+)html&quot;;
+
+
+// =====================================================================
+// Port-80 handlers
+// =====================================================================
+static esp_err_t h_root(httpd_req_t *req){
+httpd_resp_set_type(req,&quot;text/html&quot;);
+return httpd_resp_send(req, INDEX_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
+
+static esp_err_t h_stats(httpd_req_t *req){
+uint8_t r,g,b,s,v; uint16_t h; uint32_t fps;
+portENTER_CRITICAL(&amp;gMux);
+r=gR;g=gG;b=gB;h=gH;s=gS;v=gV;fps=gFps;
+portEXIT_CRITICAL(&amp;gMux);
+int cui = constrain((gContrast+2)*25, 0, 100);
+char buf[240];
+snprintf(buf,sizeof(buf),
+  &quot;{\&quot;r\&quot;:%u,\&quot;g\&quot;:%u,\&quot;b\&quot;:%u,\&quot;h\&quot;:%u,\&quot;s\&quot;:%u,\&quot;v\&quot;:%u,&quot;
+
+&quot;\&quot;fps\&quot;:%u,\&quot;cui\&quot;:%d,\&quot;vol\&quot;:%d,\&quot;color\&quot;:\&quot;%s\&quot;,\&quot;dfReady\&quot;:%s}&quot;,
+r,g,b,h,s,v,fps,cui,gVolume,gColorName, dfReady ? &quot;true&quot; : &quot;false&quot;);
+httpd_resp_set_type(req,&quot;application/json&quot;);
+httpd_resp_set_hdr(req,&quot;Cache-Control&quot;,&quot;no-store&quot;);
+httpd_resp_set_hdr(req,&quot;Access-Control-Allow-Origin&quot;,&quot;*&quot;);
+return httpd_resp_send(req,buf,HTTPD_RESP_USE_STRLEN); }
+
+
+static esp_err_t h_contrast(httpd_req_t *req){
+char qs[24]={0}, val[8]={0};
+httpd_req_get_url_query_str(req,qs,sizeof(qs));
+httpd_query_key_value(qs,&quot;v&quot;,val,sizeof(val));
+int ui = constrain(atoi(val),0,100);
+int c = constrain((ui/25)-2,-2,2);
+gContrast = c;
+sensor_t *s = esp_camera_sensor_get();
+if (s) s-&gt;set_contrast(s,c);
+Serial.printf(&quot;[contrast] slider=%d sensor=%d\n&quot;,ui,c);
+return httpd_resp_sendstr(req,&quot;ok&quot;);
+}
+
+
+static esp_err_t h_volume(httpd_req_t *req){
+char qs[24]={0}, val[8]={0};
+httpd_req_get_url_query_str(req,qs,sizeof(qs));
+httpd_query_key_value(qs,&quot;v&quot;,val,sizeof(val));
+int vol = constrain(atoi(val), 0, 30);
+gVolume = vol;
+if (dfReady) dfPlayer.volume(vol);
+Serial.printf(&quot;[volume] %d/30\n&quot;, vol);
+return httpd_resp_sendstr(req,&quot;ok&quot;);
+}
+
+
+static void startUIServer(){
+httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+cfg.server_port = 80;
+cfg.max_open_sockets = 5;
+if (httpd_start(&amp;uiServer, &amp;cfg) != ESP_OK){
+  Serial.println(&quot;UI server FAILED&quot;); return;
+}
+httpd_uri_t u0 = {&quot;/&quot;, HTTP_GET, h_root, NULL}; httpd_uri_t
+u1 = {&quot;/stats&quot;, HTTP_GET, h_stats, NULL}; httpd_uri_t u2 =
+{&quot;/contrast&quot;, HTTP_GET, h_contrast, NULL}; httpd_uri_t u3 =
+{&quot;/volume&quot;,             HTTP_GET,            h_volume,             NULL};
+httpd_register_uri_handler(uiServer,&amp;u0);
+httpd_register_uri_handler(uiServer,&amp;u1);
+httpd_register_uri_handler(uiServer,&amp;u2);
+httpd_register_uri_handler(uiServer,&amp;u3);
+Serial.println(&quot;UI server ready → http://192.168.4.1&quot;);
+}
+
+
+
+// =====================================================================
+// Serve one MJPEG client on the raw WiFiServer (port 81)
+// =====================================================================
+static void serveStream(WiFiClient client){
+Serial.println(&quot;[stream] client connected&quot;);
+
+
+client.print(
+  &quot;HTTP/1.1 200 OK\r\n&quot;
+  &quot;Content-Type: multipart/x-mixed-replace;boundary=fb\r\n&quot;
+  &quot;Cache-Control: no-cache\r\n&quot;
+  &quot;Pragma: no-cache\r\n\r\n&quot;);
+
+
+uint32_t frames=0, t0=millis();
+
+
+while (client.connected()){
+  checkSpeakButton();
+  checkVolumeButtons();
+
+
+  camera_fb_t *fb = esp_camera_fb_get();
+  if (!fb){ delay(5); continue; }
+
+
+
+  sampleColors(fb);
+
+
+  uint8_t *jpg=NULL; size_t jlen=0;
+  bool ok = frame2jpg(fb, 50, &amp;jpg, &amp;jlen);
+  esp_camera_fb_return(fb);
+  if (!ok || !jpg){ continue; }
+
+
+  char hdr[72];
+  int hl = snprintf(hdr,sizeof(hdr),
+     &quot;\r\n--fb\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n&quot;,
+     (unsigned)jlen);
+  client.write((uint8_t*)hdr, hl);
+  client.write(jpg, jlen);
+  free(jpg);
+
+
+  frames++;
+  uint32_t dt = millis()-t0;
+  if (dt &gt;= 1000){
+    portENTER_CRITICAL(&amp;gMux);
+     gFps = frames;
+    portEXIT_CRITICAL(&amp;gMux);
+     frames=0; t0=millis();
+  }
+}
+Serial.println(&quot;[stream] client disconnected&quot;);
+portENTER_CRITICAL(&amp;gMux);
+gFps=0;
+portEXIT_CRITICAL(&amp;gMux);
+}
+
+
+// =====================================================================
+void setup(){
+Serial.begin(115200);
+delay(400);
+Serial.println(&quot;\n=== ESP32-CAM SoftAP + DFPlayer ===&quot;);
+
+
+pinMode(SPEAK_BTN_PIN, INPUT_PULLUP);
+pinMode(VOL_UP_PIN, INPUT_PULLUP);
+pinMode(VOL_DOWN_PIN, INPUT_PULLUP);
+
+
+// DFPlayer first (needs settle time)
+dfSerial.begin(9600, SERIAL_8N1, DF_RX_PIN, DF_TX_PIN);
+delay(1000);
+if (dfPlayer.begin(dfSerial, false, true)) {
+  dfPlayer.volume(gVolume);
+  dfReady = true;
+  Serial.printf(&quot;[DF] ready — volume %d/30\n&quot;, gVolume);
+} else {
+  Serial.println(&quot;[DF] not found — check wiring/SD card&quot;);
+}
+
+
+pinMode(PWDN_GPIO_NUM, OUTPUT);
+digitalWrite(PWDN_GPIO_NUM,HIGH); delay(80);
+digitalWrite(PWDN_GPIO_NUM,LOW); delay(80);
+
+
+camera_config_t cfg;
+cfg.ledc_channel=LEDC_CHANNEL_0; cfg.ledc_timer=LEDC_TIMER_0;
+cfg.pin_d0=Y2_GPIO_NUM; cfg.pin_d1=Y3_GPIO_NUM;
+cfg.pin_d2=Y4_GPIO_NUM; cfg.pin_d3=Y5_GPIO_NUM;
+cfg.pin_d4=Y6_GPIO_NUM; cfg.pin_d5=Y7_GPIO_NUM;
+cfg.pin_d6=Y8_GPIO_NUM; cfg.pin_d7=Y9_GPIO_NUM;
+cfg.pin_xclk=XCLK_GPIO_NUM; cfg.pin_pclk=PCLK_GPIO_NUM;
+cfg.pin_vsync=VSYNC_GPIO_NUM; cfg.pin_href=HREF_GPIO_NUM;
+cfg.pin_sscb_sda=SIOD_GPIO_NUM; cfg.pin_sscb_scl=SIOC_GPIO_NUM;
+cfg.pin_pwdn=PWDN_GPIO_NUM; cfg.pin_reset=RESET_GPIO_NUM;
+cfg.xclk_freq_hz = 20000000;
+cfg.pixel_format = PIXFORMAT_YUV422;
+cfg.frame_size = FRAMESIZE_QQVGA;
+cfg.grab_mode = CAMERA_GRAB_LATEST;
+cfg.jpeg_quality = 50;
+cfg.fb_count = psramFound() ? 2 : 1;
+cfg.fb_location = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
+
+
+if (esp_camera_init(&amp;cfg) != ESP_OK){
+  Serial.println(&quot;Camera FAILED&quot;); return;
+
+}
+sensor_t *s = esp_camera_sensor_get();
+if (s){
+  s-&gt;set_contrast(s,0);
+  s-&gt;set_brightness(s,0);
+  s-&gt;set_saturation(s,0);
+  s-&gt;set_framesize(s,FRAMESIZE_QQVGA);
+}
+Serial.println(&quot;Camera OK — QQVGA 160×120&quot;);
+
+
+WiFi.mode(WIFI_AP);
+WiFi.softAP(AP_SSID, AP_PASS);
+esp_wifi_set_ps(WIFI_PS_NONE);
+Serial.printf(&quot;AP: %s / %s\n&quot;, AP_SSID, AP_PASS);
+Serial.printf(&quot;Dashboard → http://%s\n&quot;, WiFi.softAPIP().toString().c_str());
+Serial.printf(&quot;Stream → http://%s:81/stream\n&quot;, WiFi.softAPIP().toString().c_str());
+
+
+
+camera_fb_t *fb = esp_camera_fb_get();
+if (fb){ sampleColors(fb); esp_camera_fb_return(fb); }
+
+
+startUIServer();
+streamServer.begin();
+Serial.println(&quot;Stream server (WiFiServer) ready on :81&quot;);
+Serial.println(&quot;Speak button: GPIO 13 → GND (press to speak color)&quot;);
+
+
+// Play startup sound LAST — after camera, WiFi, and servers are all
+// ready so nothing disturbs the DFPlayer UART during playback.
+if (dfReady) {
+  delay(500); // let everything settle
+  dfPlayer.play(2);
+  Serial.println(&quot;[DF] startup sound → track 2 (Device is started)&quot;);
+}
+}
+
+
+void loop(){
+checkSpeakButton();
+checkVolumeButtons();
+
+
+WiFiClient client = streamServer.accept();
+if (client){
+  uint32_t deadline = millis() + 200;
+  while (client.available() &amp;&amp; millis() &lt; deadline) client.read();
+  serveStream(client);
+  client.stop();
+} else {
+  camera_fb_t *fb = esp_camera_fb_get();
+  if (fb){ sampleColors(fb); esp_camera_fb_return(fb); }
+  delay(20);
+}
+}
+</code></pre></details></div></section>
+<section><div class="wrap"><h2>Colourblind glasses files</h2><div class="grid">
+<div class="card"><h3>Colorblindglasses STL files</h3><p>Both files in one zip.</p><a class="btn primary" href="downloads/colorblindglasses.zip" download>Download both (.zip)</a></div>
+<div class="card"><h3>Individual files</h3><p>Download each STL separately.</p><div style="display:flex;flex-wrap:wrap;gap:8px"><a class="btn" href="downloads/glasses/colorblindglasses-20.stl" download>Colorblindglasses (20)</a><a class="btn" href="downloads/glasses/colorblindglasses-21.stl" download>Colorblindglasses (21)</a></div></div></div></div></section>
+<footer><div class="wrap">© 2026 HueBelieve · No colourblind left behind</div></footer></body></html>
