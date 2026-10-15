@@ -1,15 +1,13 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HueView</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="styles.css"></head><body>
 <nav><div class="wrap"><a class="logo" href="index.html"><img src="images/logo.png" alt="HueBelieve" height="40"></a>
-<div class="links"><a href="index.html" class="">Home</a><a href="huetest.html" class="">HueTest</a><a href="hueview.html" class="on">HueView</a><a href="index.html#about" class="">About</a></div><a class="btn primary" href="index.html#contact">Say hi</a></div></nav>
+<div class="links"><a href="index.html" class="">Home</a><a href="huetest.html" class="">HueTest</a><a href="hueview.html" class="on">HueView</a><a href="index.html#about" class="">About</a></div><a class="btn primary" href="mailto:info@HueBelieve.com">Say hi</a></div></nav>
 
 <header class="wrap pagehead"><h1>HueView</h1><p>3D-printed glasses driven by an Arduino, designed to help colourblind wearers tell colours apart.</p></header>
 <section><div class="wrap"><h2>Build it yourself</h2><div class="grid">
 <div class="card"><h3>3D frame files</h3><p>All 5 STL parts for printing the frame, in one zip.</p><a class="btn primary" href="downloads/hueview-frame.zip" download>Download all (.zip)</a></div><div class="card"><h3>Individual parts</h3><p>Download each STL separately.</p><div style="display:flex;flex-wrap:wrap;gap:8px"><a class="btn" href="downloads/3d/hueview-part-1.stl" download>Part 1</a><a class="btn" href="downloads/3d/hueview-part-2.stl" download>Part 2</a><a class="btn" href="downloads/3d/hueview-part-3.stl" download>Part 3</a><a class="btn" href="downloads/3d/hueview-part-4.stl" download>Part 4</a><a class="btn" href="downloads/3d/hueview-part-5.stl" download>Part 5</a></div></div></div>
 <h3 style="margin-top:40px">Arduino IDE code</h3><p class="muted">ESP32-CAM (AI Thinker) with a DFPlayer Mini. It names the colour in view and speaks it aloud when you press the button. Needs the <code>DFRobotDFPlayerMini</code> library.</p>
 <p style="margin-top:8px"><a class="btn" href="code/hueview.ino" download>Download .ino</a></p>
-<h3 style="margin-top:24px">Colour codes</h3><table><tr><th>Color</th><th>No.</th><th>Color</th><th>No.</th></tr>
-<tr><td>Red</td><td>001</td><td>Purple</td><td>008</td></tr><tr><td>Orange</td><td>002</td><td>Pink</td><td>009</td></tr><tr><td>Yellow</td><td>003</td><td>Brown</td><td>010</td></tr><tr><td>Green</td><td>004</td><td>White</td><td>011</td></tr><tr><td>Lime</td><td>005</td><td>Gray</td><td>012</td></tr><tr><td>Blue</td><td>006</td><td>Black</td><td>013</td></tr><tr><td>Cyan</td><td>007</td><td>Unknown</td><td>014</td></tr></table>
 <details style="margin-top:24px"><summary class="btn">Show full code</summary><pre><code>// =====================================================================
 // ESP32-CAM SoftAP color stream + DFPlayer Mini
 // - Live MJPEG on :81, dashboard/stats on :80
