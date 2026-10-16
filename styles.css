@@ -72,3 +72,10 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
 .kids.parts figcaption{font-size:14px}
 .card>.btn{margin-top:auto}
 .chip:nth-child(6){background:#e3e0f7}
+.photo .tag{position:absolute;left:14px;bottom:14px;z-index:2;padding:8px 16px;border-radius:999px;background:rgba(255,255,255,.92);color:#0d1220;font-size:14px;font-weight:700}
+a.chip{display:inline-flex;align-items:center;gap:6px;color:inherit;transition:transform .15s}
+a.chip:hover{transform:translateY(-2px)}
+a.chip .arr{font-size:15px;transition:transform .15s}
+a.chip:hover .arr{transform:translateX(3px)}
+.kids.parts figure{scroll-margin-top:110px}
+.kids.parts figure:target .photo{outline:3px solid var(--blue);outline-offset:4px}
