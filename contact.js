@@ -1,5 +1,5 @@
 // Contact form, delivered by FormSubmit.co (no account needed).
-const FORM_URL = "https://formsubmit.co/ajax/agar.vedika@gmail.com";
+const FORM_URL = "https://formsubmit.co/ajax/6fe849f4ffabd5ac599242008ab59100";
 
 const dlg = document.createElement("dialog");
 dlg.className = "contact";
