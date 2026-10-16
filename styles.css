@@ -79,3 +79,14 @@ a.chip .arr{font-size:15px;transition:transform .15s}
 a.chip:hover .arr{transform:translateX(3px)}
 .kids.parts figure{scroll-margin-top:110px}
 .kids.parts figure:target .photo{outline:3px solid var(--blue);outline-offset:4px}
+dialog.contact{border:none;border-radius:24px;padding:32px;width:min(480px,calc(100vw - 32px));box-shadow:0 20px 60px rgba(0,0,0,.25);font-family:inherit}
+dialog.contact::backdrop{background:rgba(13,18,32,.5)}
+dialog.contact h3{margin:0 0 8px;font-size:24px}
+dialog.contact form#cf{display:flex;flex-direction:column;gap:14px;margin-top:20px}
+dialog.contact label{display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:600}
+dialog.contact input,dialog.contact textarea{font:inherit;font-weight:400;padding:12px 14px;border:1px solid var(--line);border-radius:12px}
+dialog.contact button.btn{align-self:flex-start;cursor:pointer}
+dialog.contact #cf-status{font-size:14px;min-height:20px;color:var(--muted)}
+.cf-close{position:absolute;top:14px;right:18px}
+.cf-close button{background:none;border:none;font-size:28px;line-height:1;cursor:pointer;color:var(--muted)}
+dialog.contact{margin:auto}
