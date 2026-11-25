@@ -109,3 +109,9 @@ dialog.contact{margin:auto}
 .notes a{color:var(--buy);font-weight:600;text-decoration:underline}
 .tile .cap .buy{margin-top:14px}
 .tile .cap .arrow{align-self:center}
+
+.action-row{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;margin-top:24px}
+.action-row figure{margin:0}
+.action-row img,.action-row video{height:420px;width:auto;max-width:100%;border-radius:20px;display:block;object-fit:cover;background:#000}
+.action-row figcaption{margin-top:10px;max-width:560px}
+@media(max-width:700px){.action-row img,.action-row video{height:auto;width:100%}.action-row figure{width:100%}}
